@@ -55,6 +55,25 @@ ls /sys/class/tpm/ && cat /sys/class/tpm/tpm0/tpm_version_major 2>/dev/null
 | Dimensione ESP (`/boot/efi`) | Almeno **100 MB liberi** dentro l'ESP | Vedere [Risoluzione problemi](#problemi) |
 | TPM | `tpm_version_major` = `2` | Windows 11 richiede TPM 2.0; se assente vedere [Risoluzione problemi](#problemi) |
 
+### Layout reale di questo laptop (rilevato)
+
+```
+NAME          SIZE FSTYPE FSUSED FSAVAIL MOUNTPOINT
+nvme0n1     476,9G                                    ← SSD NVMe da 512 GB
+├─nvme0n1p1   976M vfat     4,5M  969,5M /boot/efi    ← ESP, condivisa con Windows: NON TOCCARE
+├─nvme0n1p2 460,2G ext4   224,6G  204,3G /            ← root Debian: da restringere
+└─nvme0n1p3  15,7G swap                  [SWAP]       ← swap, in fondo al disco: NON TOCCARE
+```
+
+Nel resto della guida i device sono quelli reali: **`/dev/nvme0n1p1`** per l'ESP, **`/dev/nvme0n1p2`** per la root Debian.
+
+Due verifiche della FASE 0 sono già superate:
+
+- **ESP**: 976 MB con soli 4,5 MB occupati. Spazio più che sufficiente per il boot loader di Windows (~50 MB), quindi le due ESP separate e i problemi descritti in [Risoluzione problemi](#problemi) non si presenteranno.
+- **Spazio libero**: 204,3 GiB su root. Sufficiente per una partizione Windows dimensionata bene.
+
+Resta da verificare in autonomia il **TPM** (comandi qui sopra) e l'attivazione di **PTT** nel BIOS (FASE 3.3).
+
 ### Quanto spazio serve davvero a Windows
 
 | Voce | Spazio |
@@ -90,6 +109,15 @@ Se anche così non si arriva a 80 GB liberi, l'alternativa concreta è un **seco
 ## FASE 1 — Backup (obbligatoria)
 
 Il ridimensionamento di una partizione ext4 è un'operazione che nella grande maggioranza dei casi riesce senza problemi, ma un'interruzione di corrente a metà lavoro rende il filesystem irrecuperabile. Prima di procedere, su disco esterno o chiavetta:
+
+> **Su questo laptop la root occupa 224,6 GiB**: un backup completo richiede un disco esterno da almeno 256 GB. Prima di comprarne uno o di rinunciare, vale la pena guardare *cosa* sono quei 225 GiB — se buona parte sono immagini disco di VirtualBox o ISO riscaricabili, il backup che conta davvero si riduce a poche decine di GB:
+>
+> ```bash
+> du -h --max-depth=2 ~ 2>/dev/null | sort -rh | head -25
+> du -sh ~/VirtualBox\ VMs ~/Downloads 2>/dev/null
+> ```
+>
+> Le VM si possono esportare in `.ova` compressi, o accettare di ricrearle. Le ISO si riscaricano. Codice, configurazioni, documenti e appunti universitari sono la parte non rigenerabile: quella va salvata comunque.
 
 ```bash
 # Backup della home (esclude cache e file rigenerabili)
@@ -242,7 +270,7 @@ sudo gparted
 Prima di ridimensionare, verificare la salute del filesystem. In GParted: selezionare la partizione root (la grande ext4), menu **Partition → Check**. Oppure da terminale, a partizione **non montata**:
 
 ```bash
-sudo umount /dev/nvme0n1p2 2>/dev/null   # sostituire con la partizione reale
+sudo umount /dev/nvme0n1p2 2>/dev/null
 sudo e2fsck -f /dev/nvme0n1p2
 ```
 
@@ -250,14 +278,24 @@ Se `e2fsck` segnala errori, farli correggere e rieseguirlo finché è pulito. **
 
 ### 4.3 — Restringere la partizione
 
+Dimensioni calcolate sul layout reale: root `/dev/nvme0n1p2` = 460,2 GiB = **471.244 MiB**, di cui 224,6 GiB occupati.
+
+| Spazio a Windows | `Free space following (MiB)` | Root risultante | Libero su Debian dopo |
+|---|---|---|---|
+| 120 GiB | `122880` | 340,2 GiB | ~115 GiB |
+| **150 GiB — consigliato** | **`153600`** | **310,2 GiB** | **~85 GiB** |
+| 200 GiB | `204800` | 260,2 GiB | ~35 GiB — troppo stretto |
+
+150 GiB è il punto di equilibrio: Windows sta comodo con applicazioni, aggiornamenti e file di paging, e a Debian restano ~85 GiB liberi, abbastanza per VM e pacchetti. A 200 GiB il lato Linux scenderebbe a ~35 GiB liberi, che con VirtualBox in uso si esaurirebbero in fretta.
+
 In GParted:
 
-1. selezionare la partizione **root ext4**;
+1. selezionare **`/dev/nvme0n1p2`** (la ext4 da 460,2 GiB);
 2. **Partition → Resize/Move**;
-3. nel campo **New size (MiB)** sottrarre lo spazio da destinare a Windows. Per 140 GB: sottrarre `143360`;
-4. **importante**: ridurre la dimensione lasciando lo spazio libero **dopo** la partizione (il campo *Free space following* deve crescere, *Free space preceding* deve restare a 0). Spostare l'inizio di una partizione root è lento e rischioso, e romperebbe il boot;
+3. compilare **`Free space following (MiB)` = `153600`** e premere Tab: GParted ricalcola *New size* da sé. Conviene agire su questo campo invece che su *New size*, perché è la grandezza che conta e si evita un errore di sottrazione;
+4. **verificare che `Free space preceding (MiB)` resti a `0`**. Se diventa diverso da zero, GParted sposterebbe l'inizio della partizione: operazione lentissima e che rende il sistema non avviabile. Rimetterlo a 0;
 5. cliccare **Resize/Move**, poi il segno di spunta ✓ per applicare;
-6. **non interrompere l'operazione**: dura 10–40 minuti secondo l'occupazione del disco. Il laptop deve essere collegato alla corrente.
+6. **non interrompere l'operazione**: con 224,6 GiB di dati da verificare e reindirizzare, dura verosimilmente **30–60 minuti**. Il laptop deve essere collegato alla corrente.
 
 Al termine si vedrà lo spazio non allocato. **Lasciarlo non allocato**: sarà il programma di installazione di Windows a crearci le sue partizioni.
 
@@ -286,12 +324,16 @@ Scegliere **"Personalizzata: installa solo Windows (avanzato)"** — mai *"Aggio
 
 Comparirà l'elenco delle partizioni del disco. Un layout tipico:
 
-| Partizione | Dimensione | Tipo | Cos'è |
-|---|---|---|---|
-| Partizione 1 | ~512 MB | Sistema | ESP — il boot loader, **NON TOCCARE** |
-| Partizione 2 | grande | Primaria | Debian root ext4 — **NON TOCCARE** |
-| **Spazio non allocato** | ~140 GB | — | ← **selezionare questo** |
-| Partizione 3 | ~8–16 GB | Primaria | swap Linux — **NON TOCCARE** |
+Quello che comparirà su questo disco, dopo il ridimensionamento della FASE 4:
+
+| Voce in elenco | Dimensione | Cos'è |
+|---|---|---|
+| Partizione 1: Sistema | **976 MB** | ESP — contiene GRUB, **NON TOCCARE** |
+| Partizione 2: Primaria | **~310 GB** | Debian root ext4, **NON TOCCARE** |
+| **Spazio non allocato** | **~150 GB** | ← **selezionare questo** |
+| Partizione 3: Primaria | **~15,7 GB** | swap Linux, **NON TOCCARE** |
+
+Windows non sa leggere ext4 né swap, quindi le partizioni 2 e 3 potrebbero comparire senza etichetta o come "Primaria" senza altre indicazioni: riconoscerle dalla dimensione. La sola voce da selezionare è quella da ~150 GB marcata *Spazio non allocato*.
 
 > **Il punto in cui si distrugge tutto**: selezionare *"Spazio non allocato"* e cliccare **Nuovo**. Non cliccare mai **Formatta** o **Elimina** su nessuna partizione esistente, e in particolare non sulla Partizione 1: è la ESP condivisa, e formattarla cancella il boot loader di Debian. Se la schermata mostra un'unica voce "Spazio non allocato" pari all'intero disco, il ridimensionamento non è andato a buon fine — **annullare l'installazione** e tornare alla FASE 4.
 
