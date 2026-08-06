@@ -6,14 +6,14 @@
 
 **Tempo richiesto**: 2–4 ore, di cui circa 1 ora di attesa passiva (download ISO, installazione Windows).
 
-**Rischio principale**: il ridimensionamento della partizione Debian è l'unico passo che può causare perdita di dati. La FASE 1 (backup) non è opzionale.
+**Rischio principale**: il ridimensionamento della partizione Debian è l'unico passo che può causare perdita di dati. Se i dati sul disco sono sacrificabili il backup completo si può saltare, ma il `salvataggio minimo` e il controllo `e2fsck` della FASE 1 vanno fatti comunque: costano cinque minuti e coprono la causa di fallimento più frequente.
 
 ---
 
 ## INDICE
 
 - [FASE 0 — Verifiche preliminari (30 minuti)](#fase-0)
-- [FASE 1 — Backup (obbligatoria)](#fase-1)
+- [FASE 1 — Backup](#fase-1)
 - [FASE 2 — Recupero della licenza dal firmware](#fase-2)
 - [FASE 3 — Download ISO Windows e chiavetta avviabile](#fase-3)
 - [FASE 4 — Ridimensionamento della partizione Debian](#fase-4)
@@ -106,9 +106,67 @@ Se anche così non si arriva a 80 GB liberi, l'alternativa concreta è un **seco
 ---
 
 <a name="fase-1"></a>
-## FASE 1 — Backup (obbligatoria)
+## FASE 1 — Backup
 
-Il ridimensionamento di una partizione ext4 è un'operazione che nella grande maggioranza dei casi riesce senza problemi, ma un'interruzione di corrente a metà lavoro rende il filesystem irrecuperabile. Prima di procedere, su disco esterno o chiavetta:
+Il ridimensionamento di una partizione ext4 riesce senza problemi nella grande maggioranza dei casi, ma un'interruzione di corrente a metà lavoro rende il filesystem irrecuperabile.
+
+### Se i dati sul disco sono sacrificabili
+
+È la premessa di `tutorial v3.md`, e resta valida: se non c'è nulla da conservare, il backup completo da 225 GiB non ha senso. Quello che serve capire è **quanto costa il caso peggiore**, non quanto è probabile.
+
+Se il resize fallisce si perde l'installazione Debian — non il disco, non Windows (non è ancora installato), non l'hardware. Il costo è rifare l'installazione seguendo `tutorial v3.md` o `tutorial v2.md`: 1–2 ore. Probabilità sull'ordine dell'1–2%.
+
+Delle tre cause reali di fallimento, due si neutralizzano a costo zero e **non vanno saltate anche rinunciando al backup**:
+
+| Causa | Mitigazione | Costo |
+|---|---|---|
+| Corruzione preesistente del filesystem | `e2fsck -f` prima del resize (FASE 4.2) | 5 minuti |
+| Interruzione di corrente a metà operazione | Alimentatore collegato, non durante un temporale | zero |
+| Guasto dell'SSD durante l'operazione | Non controllabile | — |
+
+Il `salvataggio minimo` sotto va fatto in ogni caso: sono ~200 MB e cinque minuti, e copre le cose che *non* si rigenerano scaricandole di nuovo.
+
+```bash
+mkdir -p /media/$USER/CHIAVETTA/salvataggio-minimo
+cd ~
+
+# Chiavi, configurazioni, dotfile
+tar czf /media/$USER/CHIAVETTA/salvataggio-minimo/essenziale.tar.gz \
+  .ssh .gnupg .config/hypr .bashrc .zshrc .gitconfig 2>/dev/null
+
+# Elenco pacchetti, per ricostruire il sistema rapidamente
+dpkg --get-selections > /media/$USER/CHIAVETTA/salvataggio-minimo/pacchetti.txt
+
+# Documenti e appunti: la parte davvero non rigenerabile
+cp -r ~/Documenti /media/$USER/CHIAVETTA/salvataggio-minimo/ 2>/dev/null
+sync
+```
+
+Le chiavi **SSH e GPG** sono la voce che fa più male perderle: non si riscaricano, vanno rigenerate e reinserite su GitHub e su ogni servizio dove erano registrate. Controllare anche di non avere lavoro non pushato:
+
+```bash
+# In ogni repository locale
+git status && git log --oneline @{u}..HEAD
+```
+
+### L'alternativa: azzerare e reinstallare nell'ordine canonico
+
+Se i dati sono sacrificabili si apre una strada che con dati da conservare sarebbe esclusa: **cancellare il disco, installare Windows per primo e Debian dopo**. È l'ordine per cui il dual boot è progettato — nessun resize, e l'installer Debian rileva Windows e configura GRUB da sé, per cui si salta l'intera FASE 6.
+
+Il confronto è questo:
+
+| | Resize (questa guida) | Azzerare e reinstallare |
+|---|---|---|
+| Tempo | ~45 min + FASE 6 | 3–4 ore |
+| Debian da riconfigurare | Solo nell'1–2% dei casi | **Sempre** |
+| Rischio di perdere l'installazione | 1–2% | 100% (è il piano) |
+| Complessità | GParted + ripristino GRUB | Nessuna insidia |
+
+Sui numeri conviene ancora il resize: si rischia un pomeriggio con probabilità dell'1–2% invece di spenderlo con certezza. L'azzeramento ha senso solo se l'installazione attuale sta comunque stretta e un sistema pulito è desiderabile di per sé — per esempio passando da GNOME all'assetto Hyprland di `tutorial v2.md`.
+
+### Backup completo (se i dati contano)
+
+Su disco esterno o chiavetta:
 
 > **Su questo laptop la root occupa 224,6 GiB**: un backup completo richiede un disco esterno da almeno 256 GB. Prima di comprarne uno o di rinunciare, vale la pena guardare *cosa* sono quei 225 GiB — se buona parte sono immagini disco di VirtualBox o ISO riscaricabili, il backup che conta davvero si riduce a poche decine di GB:
 >
@@ -578,7 +636,9 @@ Se le applicazioni richiedono GPU o hardware dedicato, il dual boot è la rispos
 
 ## Checklist finale
 
-- [ ] Backup della home su disco esterno completato e **verificato** (aprire qualche file dal backup)
+- [ ] `salvataggio-minimo` fatto: chiavi SSH/GPG, dotfile, documenti, elenco pacchetti
+- [ ] Nessun commit locale non pushato (`git log --oneline @{u}..HEAD` in ogni repo)
+- [ ] Backup completo della home, **se** i dati contano — e verificato aprendo qualche file
 - [ ] `layout-disco-pre-windows.txt` copiato fuori dal laptop
 - [ ] Product key recuperato dalla tabella MSDM e annotato altrove
 - [ ] Almeno 130 GB liberi su `/`
